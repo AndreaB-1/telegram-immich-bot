@@ -42,6 +42,7 @@ def validate_config():
 IMMICH_API_URL = os.getenv("IMMICH_API_URL", "http://your-immich-instance.ltd/api")
 IMMICH_API_KEY = os.getenv("IMMICH_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+IMMICH_ALBUM_ID = os.getenv("IMMICH_ALBUM_ID")
 
 allowed_user_ids = os.getenv("ALLOWED_USER_IDS")
 if not allowed_user_ids:
@@ -101,6 +102,30 @@ def get_image_metadata(file_path):
         now = datetime.now(timezone.utc)
         return format_iso_date(now), format_iso_date(now)
 
+def add_asset_to_album(asset_id):
+    """Add an asset to the configured album. Returns True on success, False otherwise."""
+    if not IMMICH_ALBUM_ID:
+        return True
+    try:
+        response = requests.put(
+            f"{IMMICH_API_URL}/albums/{IMMICH_ALBUM_ID}/assets",
+            headers={'x-api-key': IMMICH_API_KEY, 'Content-Type': 'application/json'},
+            json={'ids': [asset_id]},
+            timeout=10
+        )
+        if response.status_code == 200:
+            results = response.json()
+            if results and results[0].get('success'):
+                logger.info(f"Added asset {asset_id} to album {IMMICH_ALBUM_ID}")
+                return True
+            logger.warning(f"Failed to add asset {asset_id} to album: {results}")
+            return False
+        logger.error(f"Album add request failed ({response.status_code}): {response.text}")
+        return False
+    except Exception as e:
+        logger.error(f"Error adding asset to album: {e}")
+        return False
+
 def calculate_sha1(file_path):
     """Calculate SHA1 checksum of a file."""
     sha1 = hashlib.sha1()
@@ -155,10 +180,12 @@ async def send_startup_message(application: Application):
     """Send startup message to all allowed users when container starts."""
     immich_status, user_info = await get_immich_status()
 
+    album_info = f"📁 Uploading to album: {IMMICH_ALBUM_ID}\n" if IMMICH_ALBUM_ID else ""
     startup_message = (
         f"🤖 {BOT_NAME} v{BOT_VERSION} has started!\n\n"
         f"{immich_status}\n"
-        f"Logged in as {user_info}\n\n"
+        f"Logged in as {user_info}\n"
+        f"{album_info}\n"
         "Bot is ready to receive your files."
     )
 
@@ -178,10 +205,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a help message with Immich connection status."""
     immich_status, user_info = await get_immich_status()
 
+    album_info = f"📁 Target album ID: {IMMICH_ALBUM_ID}\n" if IMMICH_ALBUM_ID else ""
     help_message = (
         f"ℹ️ {BOT_NAME} v{BOT_VERSION}\n\n"
         f"{immich_status}\n"
-        f"Logged in as {user_info}\n\n"
+        f"Logged in as {user_info}\n"
+        f"{album_info}\n"
         "Available commands:\n"
         "/help - Show this help message\n"
         "/version - Show bot version\n"
@@ -285,12 +314,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if response.status_code in (200, 201):
                     response_data = response.json()
+                    asset_id = response_data.get('id')
                     if response.status_code == 200 and response_data.get('status') == 'duplicate':
                         logger.info(f"File {file_name} is a duplicate in Immich")
+                        if asset_id and IMMICH_ALBUM_ID:
+                            add_asset_to_album(asset_id)
                         await update.message.reply_text(f"ℹ️ File {file_name} already exists in Immich.")
                     else:
                         logger.info(f"Successfully uploaded file {file_name} to Immich")
-                        await update.message.reply_text(f"✅ File {file_name} uploaded successfully!")
+                        album_msg = ""
+                        if asset_id and IMMICH_ALBUM_ID:
+                            if add_asset_to_album(asset_id):
+                                album_msg = f"\n📁 Added to album."
+                            else:
+                                album_msg = f"\n⚠️ Uploaded but failed to add to album."
+                        await update.message.reply_text(f"✅ File {file_name} uploaded successfully!{album_msg}")
                 else:
                     logger.error(f"Failed to upload file {file_name} to Immich. Status code: {response.status_code}, Response: {response.text}")
                     await update.message.reply_text(f"❌ Failed to upload file. Error: {response.text}")
@@ -369,12 +407,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if response.status_code in (200, 201):
                 response_data = response.json()
+                asset_id = response_data.get('id')
                 if response.status_code == 200 and response_data.get('status') == 'duplicate':
                     logger.info(f"Photo {file_name} is a duplicate in Immich")
+                    if asset_id and IMMICH_ALBUM_ID:
+                        add_asset_to_album(asset_id)
                     await update.message.reply_text(f"ℹ️ Photo already exists in Immich.")
                 else:
                     logger.info(f"Successfully uploaded photo {file_name} to Immich")
-                    await update.message.reply_text(f"✅ Photo uploaded successfully!")
+                    album_msg = ""
+                    if asset_id and IMMICH_ALBUM_ID:
+                        if add_asset_to_album(asset_id):
+                            album_msg = f"\n📁 Added to album."
+                        else:
+                            album_msg = f"\n⚠️ Uploaded but failed to add to album."
+                    await update.message.reply_text(f"✅ Photo uploaded successfully!{album_msg}")
             else:
                 logger.error(f"Failed to upload photo {file_name} to Immich. Status code: {response.status_code}, Response: {response.text}")
                 await update.message.reply_text(f"❌ Failed to upload photo. Error: {response.text}")

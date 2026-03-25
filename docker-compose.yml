@@ -8,4 +8,6 @@ services:
       - TELEGRAM_BOT_TOKEN=xxx:xxxxxxxxxxx
       - ALLOWED_USER_IDS=xxxxxx
       - TZ=Europe/Madrid
+      # Optional: set to an Immich album ID to automatically add uploads to that album
+      # - IMMICH_ALBUM_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     image: ghcr.io/myanesp/telegram-immich-bot
